@@ -12,13 +12,12 @@
   <img src="https://img.shields.io/badge/No-BRAM%20%C2%B7%20XADC%20%C2%B7%20Divider-2E8B57?style=flat-square" alt="No BRAM/XADC/Divider">
 </p>
 
-<!-- TODO: assets/ 폴더에 아래 이미지를 추가한 뒤 주석을 해제하세요.
+
 <p>
   <img src="./assets/mimicarm.png" width="58%" alt="MimicArm">
   &nbsp;&nbsp;
   <img src="./assets/basys3_panel.png" width="35%" alt="Basys-3 Control Panel">
 </p>
--->
 
 **보드의 버튼과 스위치만으로 3축 로봇 팔을 조작하고, 원하는 자세를 D-FF 레지스터 뱅크에 기억시킨 뒤 부드럽게 자동 재생하는 순수 순차회로 설계 프로젝트입니다.**
 
