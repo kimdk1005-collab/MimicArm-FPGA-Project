@@ -1,507 +1,532 @@
-# `( ¯꒳¯ )` 팀 — MimicArm
+<div align="center">
 
-### FPGA(순차회로) 기반 동작 학습·재생(Teach & Playback) 로봇 팔
+# 🦾 MimicArm
 
-> 초심자 3인 체제. **아날로그(XADC)·대용량메모리(BRAM)·나눗셈 연산을 모두 배제**하고, 순수 순차회로(D-FF·카운터·비교기)만으로 핵심 기능을 구현한다. 부드러운 재생까지 **나눗셈 없이** 달성하는 것이 목표.
+### FPGA 순차회로 기반 Teach & Playback 로봇 팔
 
----
+<p>
+  <img src="https://img.shields.io/badge/FPGA-Basys--3%20(Artix--7)-E62A2A?style=flat-square&logo=xilinx&logoColor=white" alt="Basys-3">
+  <img src="https://img.shields.io/badge/HDL-Verilog-1E4C8A?style=flat-square" alt="Verilog">
+  <img src="https://img.shields.io/badge/Tool-Vivado-0071C5?style=flat-square&logo=xilinx&logoColor=white" alt="Vivado">
+  <img src="https://img.shields.io/badge/Clock-100%20MHz-555555?style=flat-square" alt="100 MHz">
+  <img src="https://img.shields.io/badge/No-BRAM%20%C2%B7%20XADC%20%C2%B7%20Divider-2E8B57?style=flat-square" alt="No BRAM/XADC/Divider">
+</p>
 
-## 0. 이 프로젝트가 뭐냐면 (한눈에)
+<!-- TODO: assets/ 폴더에 아래 이미지를 추가한 뒤 주석을 해제하세요.
+<p>
+  <img src="./assets/mimicarm.png" width="58%" alt="MimicArm">
+  &nbsp;&nbsp;
+  <img src="./assets/basys3_panel.png" width="35%" alt="Basys-3 Control Panel">
+</p>
+-->
 
-로봇 팔(**3축 관절 + 집게**)을 **보드의 십자 버튼과 스위치로 조작**하고, 원하는 동작을 **레지스터에 기억(record)**시킨 다음, 버튼 하나로 그 동작을 **부드럽게 자동 재생(play)**하게 만드는 장치입니다.
+**보드의 버튼과 스위치만으로 3축 로봇 팔을 조작하고, 원하는 자세를 D-FF 레지스터 뱅크에 기억시킨 뒤 부드럽게 자동 재생하는 순수 순차회로 설계 프로젝트입니다.**
 
-산업용 로봇 팔의 'Teach & Playback' 원리를 우리가 배운 D-FF·순차회로 지식만으로 구현하는 것이 목표입니다.
+<!-- TODO: 시연 영상 업로드 후 링크 추가
+[▶ 동작 시연 영상](https://...)
+-->
 
-**왜 좋은 주제냐면:** 복잡한 외부 센서 없이 보드 입력만으로 실물 로봇 팔이 움직이는 직관적 데모가 되고, "순차회로 기반 레지스터 메모리 + 증분 보간 설계"라는 과목 핵심을 정확히 보여줍니다.
-
----
-
-## 1. 우리가 만드는 것 (사용 시나리오)
-
-발표 때 이 순서로 시연.
-
-1. **전원 ON** → 수동(MANUAL) 모드로 시작 (팔은 안전 중립 자세 90°)
-2. **조작** → 십자 버튼 **◀▶로 제어할 관절을 선택**, **▲▼로 각도를 증감**. 집게는 **스위치로 열고/닫기**
-3. **RECORD 모드** → 원하는 자세마다 **중앙 버튼**을 눌러 현재 자세(3관절 각도 + 집게 상태)를 레지스터에 저장 (최대 4~8개)
-4. **PLAY 모드** → 저장된 자세들을 순서대로 **부드럽게** 자동 재생
-5. **표시** → 7세그먼트에 현재 모드와 저장된 자세 개수, LED에 선택된 관절
-
----
-
-## 2. 핵심 설계 — 왜 이렇게 만드나 (발표 핵심 답변)
-
-### ① 조이스틱 대신 '스위치 + 십자 버튼'
-
-- 조이스틱은 아날로그 신호를 읽는 XADC 제어가 필요해 복잡합니다. 보드 내장 스위치와 버튼만 쓰면 **순수 디지털 논리회로**로 완벽히 제어됩니다.
-
-### ② BRAM 대신 'D-FF 레지스터 뱅크'
-
-- 대용량 메모리(BRAM IP) 대신 배운 D-FF를 연결한 레지스터 뱅크를 직접 설계합니다. 자세 4~8개면 데이터가 작아 BRAM이 불필요하고, **파형 디버깅이 쉽고 순차회로 실력을 정확히 보여줍니다.**
-
-### ③ 부드러운 움직임 — '나눗셈 없는 증분 보간'으로 구현
-
-- 일반적인 보간은 나눗셈/고정소수점이 필요해 리소스를 많이 먹고 타이밍 에러를 유발합니다.
-- 우리는 **나눗셈 없이**, 각 관절의 *현재 각도(current)*를 _목표 각도(target)_ 쪽으로 매 틱마다 **±1씩 이동**시킵니다. 비교기+카운터만으로 부드러운 움직임을 얻습니다. → 효율적이면서 부드러움 확보.
-
-### ④ 제어 철학: 상태는 스위치, 동작은 버튼
-
-- **오래 유지하는 상태**(모드, 집게 열림/닫힘)는 슬라이드 스위치에, **순간 동작**(각도 증감, 관절 선택, 저장)은 십자 버튼에 배치. 십자 버튼이 조이스틱을 대신하는 독립된 조그(jog) 컨트롤러가 됩니다.
+</div>
 
 ---
 
-## 3. 시스템 구조
+## 1. Project Overview
 
-```
-[스위치: 모드 2bit] ──────────────────┐
-[스위치: 집게 open/close] ─────────────┼──────┐
-                                       │      │
-[십자 ◀▶: 관절선택] ──(debounce)──→ [관절 선택기]
-[십자 ▲▼: 각도증감] ──(debounce)──→ [목표각도 레지스터 ×3] ←─ [모드 FSM] ⇄ [자세 레지스터뱅크 4~8개]
-[십자 ● : 자세저장] ──(debounce)─────────────────────────┘    (REC: 저장 / PLAY: 출력)
-                                       │  target[3] + 집게bit
-                                       ▼
-                          [보간기: current가 target 쪽으로 ±1씩 이동]
-                                       │  current[3]
-                                       ▼
-                            [PWM 4채널] → 서보 4개 (3관절 + 집게)
+산업용 로봇 팔의 **Teach & Playback**(작업자가 자세를 가르치면 그대로 반복 재생) 원리를, 디지털 논리회로 수업에서 배운 D-FF·카운터·비교기만으로 구현하는 것이 목표였습니다.
 
-[틱 생성기] → jog틱(각도증감 속도) / 보간틱(부드러움 속도) / dwell타이머(자세 간 멈춤)
-표시: 모드·개수 7세그, 선택 관절 LED
-```
+설계상 가장 중요한 결정은 **무엇을 쓰지 않을 것인가**였습니다. 아날로그 조이스틱(XADC), 대용량 메모리(BRAM IP), 나눗셈 연산자 — 세 가지를 모두 배제하고 보드 내장 입력과 D-FF 레지스터, 곱셈·비교만으로 전체 기능을 구성했습니다. 그 결과 설계 전체가 파형 시뮬레이션으로 추적 가능하고, IP 블랙박스 없이 동작 원리를 끝까지 설명할 수 있는 구조가 되었습니다.
 
----
+"부드러운 재생"은 보통 시작각과 목표각 사이를 보간(interpolation)하는 나눗셈으로 구현하지만, 여기서는 **일정 주기마다 현재각을 ±1씩 목표각으로 접근시키는 증분 보간**으로 나눗셈 없이 해결했습니다. PWM 듀티 계산 역시 `(2.0 ms − 1.0 ms) / 180`을 파라미터로 미리 계산해두고 런타임에는 곱셈만 수행합니다.
 
-## 4. ⭐ 십자 버튼 + 스위치 제어 맵
-
-```
-            BTNU
-          [각도 ▲]
- BTNL                  BTNR
-[◀ 관절선택]  BTNC   [관절선택 ▶]
-          [자세 저장]
-            BTND
-          [각도 ▼]
-```
-
-**십자 버튼 (5개 모두 조작용):**
-
-|입력|기능|
+| 항목 | 내용 |
 |---|---|
-|**BTNU / BTND**|선택된 관절 각도 **증가 / 감소** (누르고 있으면 jog틱마다 ±1, 범위 제한)|
-|**BTNL / BTNR**|제어할 관절 **이전 / 다음** 순환 (base ↔ shoulder ↔ elbow)|
-|**BTNC**|현재 자세 **저장** (RECORD 모드에서만 동작)|
+| 프로젝트 형태 | 팀 프로젝트 (3인) <!-- TODO: 본인 담당 모듈/역할을 확정해 주세요 --> |
+| 담당 범위 | <!-- TODO: 예) mode_fsm, reg_bank 설계 / interp·pwm_servo 설계 / 입력·표시부 --> |
+| 대상 보드 | Digilent Basys 3 (Xilinx Artix-7, XC7A35T) |
+| System Clock | 100 MHz (`create_clock -period 10.00`) |
+| HDL | Verilog |
+| Tool | Xilinx Vivado |
+| 액추에이터 | 서보모터 ×4 (Base / Shoulder / Elbow / Gripper), Pmod JA 출력 |
+| 설계 제약 | XADC · BRAM IP · 나눗셈 연산자 **미사용** — 순수 순차회로 |
 
-**슬라이드 스위치 (역할별 분리 — XDC 고정):**
+---
 
-|스위치|기능|
+## 2. Key Features
+
+| 기능 | 구현 내용 |
 |---|---|
-|**SW1 : SW0**|모드 선택 — `00`=MANUAL, `01`=RECORD, `10`=PLAY|
-|**SW2**|집게 **열기/닫기** (저장 시 자세에 함께 기록)|
-|**SW14**|**저장 자세만 비우기**(소프트 clear) — 상승엣지 1회에 `pose_count`·쓰기포인터만 0. 팔 위치·모드 불변|
-|**SW15**|**글로벌 하드 리셋** `i_rst` — 시스템 전체 초기화(모드→MANUAL, 팔→중립 90°, 포인터·`pose_count`→0). Active-High(올리면 리셋)|
-
-**표시:** LED = 선택된 관절 / 7세그 = 모드(M/R/P) + 저장 자세 개수
-
-> **리셋류를 버튼이 아닌 스위치에 둔 이유:** 십자 5버튼(U/D/L/R/C)이 전부 조작에 쓰이므로, 리셋·clear는 남는 스위치(SW15/SW14)에 배정한다. (상세: 7-7-3)
-> 
-> 실제 핀 이름은 **Basys3 마스터 XDC 파일**에서 확인해 매핑. **집게 처리:** 2상태라 스위치가 직관적이고, RECORD 시 상태를 자세에 같이 저장하면 PLAY 때 집기까지 재현됨.
-
----
-
-## 5. 모듈별 역할과 난이도
-
-|모듈명|하는 일 (쉬운 설명)|난이도|
-|---|---|---|
-|`debounce`|버튼 떨림(채터링) 제거. **`o_btn_level`(상태) + `o_btn_edge`(1펄스)** 두 출력으로 분리 제공 → 7-5 참고|보통 (필수)|
-|`tick_gen` (clk_div)|느린 enable 펄스 생성 — jog 속도 / 보간 속도 / 자세 간 dwell|쉬움|
-|`joint_select`|◀▶로 선택 관절 인덱스를 순환|쉬움|
-|`angle_ctrl` (target)|▲▼로 **선택 관절**의 목표각도를 jog틱마다 증감(범위 클램프, **INIT/리셋=90°**). PLAY 시 목표=저장 자세|보통|
-|`interp` (current)|current 각도가 target로 보간틱마다 **±1 이동** (나눗셈 X, **INIT/리셋=90°**) — **부드러움 핵심**|보통|
-|`pwm_servo` ×4|current 각도(0~180) → 20ms 주기 중 1~2ms HIGH 신호|쉬움|
-|`mode_fsm` + `play_seq`|MANUAL/RECORD/PLAY 전환(**빈 메모리면 PLAY 가드**). PLAY 시 **동기화된 도달 플래그**가 서면 dwell 후 다음 → 7-6·7-7 참고|보통 (핵심)|
-|`reg_bank`|4~8개 D-FF 레지스터. 자세 = {3각도 + 집게bit}. REC 저장 / PLAY 출력|보통|
-|`seg_display`|7세그에 모드(M/R/P) + 자세 개수, 선택 관절 LED|쉬움|
-
-원리 한 줄씩:
-
-- **pwm_servo**: 20ms마다 신호를 보내되 그중 1~2ms만 HIGH → 그 비율이 모터 각도
-- **interp**: current가 target보다 작으면 +1, 크면 −1 (매 보간틱). 그래서 점프 대신 부드럽게 이동
-- **mode_fsm**: MANUAL(▲▼가 target 조작), RECORD(BTNC로 현재 자세 저장), PLAY(저장 자세를 보간하며 순차 출력)
-- **play_seq**: PLAY에서 3관절이 목표에 도달하면(**동기화된 도달 플래그**) → 잠깐 멈춤(dwell) → 다음 자세 인덱스로
+| **3-Mode FSM** | 스위치 2비트로 `MANUAL` / `RECORD` / `PLAY` 전환, 모드 진입 Edge에서 포인터 초기화 |
+| **D-FF Register Bank** | BRAM 없이 `reg [24:0] r_mem [0:7]` — 자세 8개 저장, 비동기 읽기 |
+| **25-bit Pose Word** | `{gripper 1bit, elbow 8bit, shoulder 8bit, base 8bit}` 를 한 워드로 원자 저장 |
+| **Division-free Interpolation** | 10 ms마다 현재각을 목표각 쪽으로 ±1° 이동 — 나눗셈 없이 부드러운 재생 |
+| **Division-free Servo PWM** | 듀티 = `MIN_DUTY + angle × STEP` (STEP은 컴파일 타임 상수) |
+| **Event-aligned Dwell** | 자유 진행 카운터가 아니라 **도달이 연속 유지될 때만** 카운트 — 팔이 실제 도달 전에는 다음 자세로 넘어가지 않음 |
+| **2-Stage Synchronizer + Debounce** | 메타스테이블 방지 2단 FF + 10 ms 카운터 디바운스, level/edge 두 출력 분리 |
+| **Joint Select Ring** | BTNL/BTNR로 Base ↔ Shoulder ↔ Elbow 순환 선택, LED 원-핫 표시 |
+| **7-Segment Multiplexing** | 약 1.5 kHz 시분할로 모드 문자(M/R/P)와 저장 개수 동시 표시 |
+| **Safe Init & Guard** | 모든 관절 초기값 90°(중립), 저장된 자세가 0개면 PLAY 진입 차단 |
+| **Angle Clamping** | 목표각은 0~180° 범위에서만 증감, PWM단에서 한 번 더 클램프 |
 
 ---
 
-## 6. 역할 분담 (수평 분배)
+## 3. Operating Modes
 
-한 명에게 코딩이 몰리지 않게 모듈 단위로 배분. **각자 테스트벤치 작성 필수.**
-
-|영역|담당|하는 일|
+| Mode | `i_sw_mode` | 동작 |
 |---|---|---|
-|**A. 상태·메모리**|`________`|`mode_fsm`+`play_seq`, `reg_bank`, `angle_ctrl`(목표 레지스터), 전체 병합|
-|**B. 모터·모션**|`________`|`pwm_servo`×4, `interp`(보간), `joint_select`, 로봇 팔 기구·전원·배선|
-|**C. 입력·표시**|`________`|`debounce`, `tick_gen`, `seg_display`, 데모 영상·문서화|
-
-> **주의:** `debounce`는 모든 입력이 의존하는 모듈이라, 담당자가 막히면 통합이 지연됨. → 통합(Day 3)은 **백업 버전으로 먼저 굴리고**, 담당자 버전은 독립 검증 후 끼워넣어 진도가 멈추지 않게 한다.
-
----
-
-## 7. 🔧 RTL 코딩 가이드라인 및 인터페이스 표준
-
-> **왜 필요한가:** 초심자 3인이 Git으로 협업할 때 가장 흔한 사고는 ① 같은 파일을 여러 명이 고쳐서 생기는 **병합(Merge) 충돌**, ② 모듈을 가져다 쓸 때 포트 이름·비트 폭이 안 맞아 생기는 **인스턴스화 에러**입니다. 아래 규칙은 이 둘을 _코딩 전에_ 원천 차단하기 위한 팀 표준입니다. **작업 시작 전 전원 숙지.**
-
-### 7-1. 파일 및 모듈 명명 규칙
-
-|규칙|내용|예시|
-|---|---|---|
-|**1파일 1모듈**|한 파일에는 모듈 **하나만**. 파일명 = 모듈명|`debounce.v` → `module debounce`|
-|**Snake Case**|파일·모듈 이름은 **소문자 + 언더바(`_`)**만 사용|`pwm_servo.v`, `mode_fsm.v`|
-|**충돌 방지 효과**|각자 자기 파일만 편집 → 같은 파일을 동시에 안 건드려 **병합 충돌 없음**|—|
-
-**프로젝트 파일 목록** (1파일 1모듈 원칙 적용):
-
-|파일명|모듈명|담당 영역|
-|---|---|---|
-|`top.v`|`top`|A (최상위 통합)|
-|`mode_fsm.v`|`mode_fsm`|A|
-|`reg_bank.v`|`reg_bank`|A|
-|`angle_ctrl.v`|`angle_ctrl`|A|
-|`pwm_servo.v`|`pwm_servo`|B|
-|`interp.v`|`interp`|B|
-|`joint_select.v`|`joint_select`|B|
-|`debounce.v`|`debounce`|C|
-|`tick_gen.v`|`tick_gen`|C|
-|`seg_display.v`|`seg_display`|C|
-
-### 7-2. 신호 및 포트 명명 규칙
-
-|종류|Prefix|예시|
-|---|---|---|
-|**입력 포트**|`i_`|`i_clk`, `i_rst`, `i_btn_up`|
-|**출력 포트**|`o_`|`o_pwm_signal`, `o_seg_data`|
-|**내부 wire**|`w_`|`w_debounced_btn`|
-|**내부 reg**|`r_`|`r_angle_reg`|
-|**파라미터(Parameter)**|**전부 대문자**|`PARAM_MAX_ANGLE`|
-
-> **효과:** 다른 사람이 만든 모듈을 가져다 쓸 때, 포트 이름의 prefix만 봐도 입력/출력/방향이 즉시 구분되어 **배선 실수(인스턴스화 에러)**가 크게 줄어듭니다.
-
-### 7-3. 시스템 표준 신호 정의
-
-|신호|표준 이름|사양|
-|---|---|---|
-|**클럭**|`i_clk`|Basys3 내장 **100MHz**|
-|**리셋**|`i_rst`|**Active-High**, **동기식(synchronous)**. 소스 = **스위치 SW15** (올리면 리셋)|
-
-- 모든 모듈은 위 이름을 **그대로** 사용한다. 통일되어 있어 모듈 연결 시 이름을 바꿀 필요가 없다.
-- **리셋 방식은 동기식으로 통일**: 모든 모듈에서 `if (i_rst)`를 `always @(posedge i_clk)` _내부_에서 처리한다. async 리셋 혼용 금지 (일관성·타이밍 안정, Xilinx 7-series 권장).
-- **`i_rst` 소스는 스위치(SW15)**: 십자 5버튼이 모두 조작에 쓰이므로 리셋은 스위치에 둔다. 스위치도 Basys3에선 active-high(올림=1)라 반전 로직 불필요.
+| **MANUAL** | `2'b00` | BTNL/BTNR로 관절 선택, BTNU/BTND로 각도 증감. 집게는 스위치로 직접 개폐 |
+| **RECORD** | `2'b01` | MANUAL과 동일하게 조작하며, BTNC를 누를 때마다 현재 자세를 슬롯에 저장 (최대 8개) |
+| **PLAY** | `2'b10` | 저장된 자세를 0번부터 순서대로 재생. 도달 후 1초 머무르고 다음 자세로, 마지막 자세 후 롤오버 |
 
 ```verilog
-// 모든 모듈의 표준 포트 시작 형태
-module example_module (
-    input  wire i_clk,   // 100MHz
-    input  wire i_rst,   // Active-High, 동기식
-    // ... 이하 기능 포트
-);
+// RECORD 진입 Edge에서 카운터 클리어 — 재녹화 시 이전 기록이 섞이지 않음
+wire w_enter_record = (i_sw_mode == PARAM_MODE_RECORD) && (r_sw_mode_d != PARAM_MODE_RECORD);
+wire w_enter_play   = (i_sw_mode == PARAM_MODE_PLAY)   && (r_sw_mode_d != PARAM_MODE_PLAY);
+
+// PLAY 가드: 저장된 자세가 없으면 진입을 차단하고 MANUAL 유지
+if (r_pose_count == 4'd0) r_mode <= PARAM_MODE_MANUAL;
+else                      r_mode <= PARAM_MODE_PLAY;
 ```
 
-### 7-4. `reg_bank` (자세 메모리) 인터페이스 명세
+---
 
-A영역 담당자가 설계. **B·C영역이 이 모듈에 연결하기 전에 아래 포트 명세를 먼저 합의**할 것. 비트 폭·포트명이 여기서 어긋나면 통합 시 인스턴스화 에러가 발생한다.
+## 4. Module Hierarchy & Dataflow
 
-**자세(pose) 1개의 구성:** 3관절 각도(각 8bit) + 집게 1bit = **총 25bit** **각도 인코딩:** 값 = **각도(0~180) 직접**, 중립 = 90도 = **`8'd90`** (※ 0~255 풀스케일 아님)
+<!-- TODO: assets/block_diagram.png 추가 후 주석 해제
+<p align="center">
+  <img src="./assets/block_diagram.png" width="100%" alt="MimicArm Block Diagram">
+</p>
+-->
 
-|비트|내용|
+```text
+                          ┌──────────┐
+   i_clk 100MHz ─────────►│ tick_gen │─ jog_tick   50 Hz (20 ms)
+                          │          │─ interp_tick 100 Hz (10 ms)
+                          └──────────┘
+
+  BTNL/BTNR ─┐                        ┌──────────────┐
+             ├─►│debounce│─ edge ────►│ joint_select │─ w_joint_sel[1:0] ─┐
+  BTNC ──────┤   (×5)     ─ edge ──┐  └──────────────┘                    │
+  BTNU/BTND ─┘              level ─┼──────────────────────────────────────┤
+                                   │                                      ▼
+   i_sw_mode[1:0] ─┐               │                            ┌──────────────┐
+                   ▼               │                    jog_tick│  angle_ctrl  │
+            ┌─────────────┐        │                   ────────►│ ±1° 목표각   │
+            │  mode_fsm   │◄───────┘  i_btn_save                └──────┬───────┘
+            │ MANUAL /    │◄─── r_target_reached_pulse (top)           │
+            │ RECORD /    │                                     target_base/sh/el
+            │ PLAY        │─ o_we, o_addr[2:0] ──┐                     │
+            └──────┬──────┘─ o_pose_count[3:0]   │      {sw_gripper, el, sh, base}
+                   │        ─ o_play_mode ───────┼──────────────┐      │
+                   │                             ▼              │      │
+                   │                     ┌──────────────┐       │      │
+                   │                     │  reg_bank    │◄──────┘      │
+                   │                     │ D-FF 25b × 8 │              │
+                   │                     └──────┬───────┘              │
+                   │                            │ o_pose_data ─────────┘
+                   │                            │        (PLAY 모드에서 목표각 오버라이드)
+                   ▼                            ▼
+            ┌─────────────┐          ┌────────────────────┐  interp_tick
+            │ seg_display │          │  interp × 3        │◄──────────
+            │ 4-digit MUX │          │  현재각 ±1 접근     │
+            └─────────────┘          └─────────┬──────────┘
+                                               │ cur_base/sh/el
+                                               ▼
+                                     ┌────────────────────┐
+                                     │  pwm_servo × 4     │──► JA1~JA4
+                                     │  20 ms / 1~2 ms    │    서보 4개
+                                     └────────────────────┘
+```
+
+| Module | 역할 |
 |---|---|
-|`[7:0]`|base 관절 각도 (0~180, 중립 90)|
-|`[15:8]`|shoulder 관절 각도|
-|`[23:16]`|elbow 관절 각도|
-|`[24]`|집게 상태 (1=닫힘, 0=열림)|
+| `top.v` | 전체 배선 + 도달 검출 및 이벤트 정렬 Dwell 카운터 |
+| `tick_gen.v` | jog(50 Hz) / interp(100 Hz) / dwell(1 Hz) 틱 생성 |
+| `debounce.v` | 2단 동기화 + 10 ms 카운터 디바운스, level/edge 분리 출력 |
+| `joint_select.v` | BTNL/BTNR로 관절 인덱스 순환 (0↔1↔2) |
+| `angle_ctrl.v` | 관절별 목표각 레지스터, MANUAL 증감 / PLAY 오버라이드 |
+| `mode_fsm.v` | 모드 상태, 저장 개수, 재생 포인터, `we`/`addr` 생성 |
+| `reg_bank.v` | D-FF 25-bit × 8 자세 저장, 비동기 읽기 |
+| `interp.v` | 목표각으로 ±1씩 접근하는 증분 보간 (관절마다 1개) |
+| `pwm_servo.v` | 각도 → 20 ms 주기 PWM 듀티 변환 (관절 3 + 집게 1) |
+| `seg_display.v` | 4자리 7세그먼트 시분할 표시 |
 
-**모듈 선언 (포트 명세 — 이대로 고정):**
+---
+
+## 5. Register Bank — BRAM 대신 D-FF
+
+자세 하나를 **25-bit 단일 워드**로 묶어 저장합니다. 관절 각도를 따로 저장하지 않고 한 워드로 처리하므로, 쓰기·읽기 시 필드 간 타이밍이 어긋날 여지가 없습니다.
 
 ```verilog
-module reg_bank #(
-    parameter PARAM_ANGLE_WIDTH = 8,                                     // 관절 각도 비트 폭
-    parameter PARAM_JOINT_NUM   = 3,                                     // 관절 개수 (집게 제외)
-    parameter PARAM_POSE_WIDTH  = PARAM_JOINT_NUM*PARAM_ANGLE_WIDTH + 1, // 25 = 각도3 + 집게1
-    parameter PARAM_POSE_NUM    = 8,                                     // 저장 가능한 자세 개수
-    parameter PARAM_ADDR_WIDTH  = 3                                      // log2(POSE_NUM)
-)(
-    input  wire                         i_clk,        // 100MHz 클럭
-    input  wire                         i_rst,        // Active-High, 동기식
-    input  wire                         i_we,         // 쓰기 활성화 (1일 때 현재 자세 저장)
-    input  wire [PARAM_ADDR_WIDTH-1:0]  i_addr,       // 슬롯 선택 (저장/재생 공용)
-    input  wire [PARAM_POSE_WIDTH-1:0]  i_pose_data,  // 저장할 자세 (현재 각도 묶음)
-    output wire [PARAM_POSE_WIDTH-1:0]  o_pose_data   // 읽어낸 자세 (재생 각도 묶음)
-);
+// {집게 1bit, elbow 8bit, shoulder 8bit, base 8bit}
+assign w_pose_to_bank = {i_sw_gripper, w_target_elbow, w_target_shoulder, w_target_base};
 ```
 
-- `i_addr`는 RECORD 시 **쓰기 포인터**, PLAY 시 **읽기 포인터**가 구동한다 (`mode_fsm`/`play_seq`가 선택).
-- 저장된 자세 개수(7세그 표시·재생 종료 판단)는 `mode_fsm` 쪽에서 별도 카운터로 관리한다.
-
-**경계에서 묶기/풀기 (이 부분이 인스턴스화 에러 단골 — 비트 순서 주의):**
-
 ```verilog
-// [묶기] angle_ctrl 출력들 → reg_bank 입력 i_pose_data
-//   순서: { 집게, elbow, shoulder, base } 로 25bit 구성
-assign w_pose_data_in = { w_gripper_state,    // [24]
-                          w_elbow_angle,      // [23:16]
-                          w_shoulder_angle,   // [15:8]
-                          w_base_angle };     // [7:0]
-
-// [풀기] reg_bank 출력 o_pose_data → interp 입력 (재생 시 목표 각도)
-assign w_base_target     = o_pose_data[7:0];
-assign w_shoulder_target = o_pose_data[15:8];
-assign w_elbow_target    = o_pose_data[23:16];
-assign w_gripper_target  = o_pose_data[24];
-```
-
-**내부 구현 (BRAM 아님 — D-FF 레지스터 배열):**
-
-```verilog
-// 자세 저장용 레지스터 뱅크
-reg [PARAM_POSE_WIDTH-1:0] r_pose_mem [0:PARAM_POSE_NUM-1];
-integer idx;
+reg [24:0] r_mem [0:7];      // BRAM IP가 아닌 순수 D-FF 배열
 
 always @(posedge i_clk) begin
     if (i_rst) begin
-        // (선택) 시뮬레이션 가독성용 초기화 — 합성 시 생략 가능.
-        // 메모리 '데이터'는 리셋하지 않아도 무방 (아래 '리셋 의미 분리' 참고)
-        for (idx = 0; idx < PARAM_POSE_NUM; idx = idx + 1)
-            r_pose_mem[idx] <= {PARAM_POSE_WIDTH{1'b0}};
+        // 의도적으로 배열을 초기화하지 않음 — 리셋 팬아웃을 줄여 라우팅 최적화.
+        // 유효 데이터 범위는 mode_fsm의 pose_count가 관리한다.
     end else if (i_we) begin
-        r_pose_mem[i_addr] <= i_pose_data;   // RECORD: 현재 자세 저장 (덮어쓰기)
+        r_mem[i_addr] <= i_pose_data;
     end
 end
 
-assign o_pose_data = r_pose_mem[i_addr];     // PLAY: 선택 슬롯 출력 (조합 읽기)
+assign o_pose_data = r_mem[i_addr];   // 비동기 읽기 — 주소 변경 즉시 출력
 ```
 
-> **🔑 리셋 의미 분리 (데이터 vs 제어):** 시스템 리셋의 기준은 **메모리 데이터가 아니라 '저장된 자세 개수(pose_count) + 포인터'**다. 리셋 시 `mode_fsm`이 `pose_count → 0`, 쓰기/읽기 포인터 → 0 으로 돌리면, 이후 RECORD가 슬롯 0부터 덮어쓰고 PLAY는 `[0 ~ pose_count-1]`만 읽으므로 **기존 메모리 값은 절대 노출되지 않는다.** 따라서 위 `for` 루프 메모리 초기화는 _선택적_이며, 생략하면 200개 FF에 리셋 net이 깔리지 않아 라우팅이 가벼워진다. (FIFO가 메모리는 비우지 않고 포인터만 리셋하는 것과 동일한 원리)
-
-> **합의 포인트 정리:** 포트명(`i_we`, `i_addr`, `i_pose_data`, `o_pose_data`), 자세 폭(**25bit**), 비트 배치(base→shoulder→elbow→집게 순), 각도 인코딩(**0~180, 중립 8'd90**)을 A·B·C가 통합 전 동일하게 인지할 것.
-
-### 7-5. `debounce` 인터페이스 명세
-
-모든 버튼 입력이 거치는 모듈. **`o_btn_level`(상태 유지)과 `o_btn_edge`(1클럭 펄스)를 분리 출력**하여 인스턴스화 시 혼선을 없앤다.
-
-```verilog
-module debounce (
-    input  wire i_clk,        // 100MHz
-    input  wire i_rst,        // Active-High, 동기식
-    input  wire i_btn_raw,    // 물리 버튼 입력 (채터링 포함)
-    output wire o_btn_level,  // 떨림 제거된 '상태 유지' 신호
-    output wire o_btn_edge    // 상승엣지 '1클럭 펄스' 신호
-);
-```
-
-**두 출력의 관계 (개념):** 안정화된 레벨을 만들고, 그 상승엣지(0→1)를 1클럭 펄스로 검출.
-
-```verilog
-assign o_btn_level = r_level;                 // 떨림 제거된 상태 유지
-assign o_btn_edge  = r_level & ~r_level_d;    // 0→1 순간만 1클럭 (r_level_d는 1클럭 지연본)
-```
-
-**어느 버튼이 어느 출력을 쓰나:**
-
-|버튼|사용 출력|이유|
+| 항목 | 값 | 비고 |
 |---|---|---|
-|**BTNU / BTND**|`o_btn_level`|누르고 있는 동안 jog틱마다 ±1 (레벨 필요)|
-|**BTNL / BTNR**|`o_btn_edge`|한 번 누름 = 한 칸 이동 (펄스 필요)|
-|**BTNC**|`o_btn_edge`|한 번 누름 = 한 자세 저장 (펄스 필요)|
+| 슬롯 수 | 8개 | 주소 3-bit |
+| 워드 폭 | 25-bit | 총 200 FF |
+| 읽기 | 비동기 (조합) | 주소 변경 즉시 반영 — BRAM의 1클럭 지연 없음 |
+| 리셋 | 미적용 | 메모리 자체는 리셋하지 않고 `pose_count`로 유효 범위 관리 |
 
-> 참고: SW14(소프트 clear)도 동일한 엣지 검출 방식으로 '상승엣지 1펄스'를 만들어 사용 (7-7-3).
-
-### 7-6. 동기화 설계 규칙 — 도달 확인 플래그 (A영역 필수)
-
-`play_seq`에서 "모든 관절이 목표에 도달했는가"는 **24비트 비교**(3관절 × 8bit)다. 이 조합 결과를 FSM 조건에 **바로** 넣지 말고, **클럭에 동기화된 플래그 레지스터를 한 단계 거쳐** 사용한다. (집게는 2상태라 보간/도달 비교 대상이 아니며, 재생 시 즉시 세팅된다.)
+### 쓰기 주소 타이밍
 
 ```verilog
-// play_seq(A영역) 내부: 3관절 도달 비교는 '조합', FSM엔 '동기화된 플래그'로 전달
-wire w_all_reached = (r_current_base     == w_base_target)     &&
-                     (r_current_shoulder == w_shoulder_target) &&
-                     (r_current_elbow    == w_elbow_target);
-
-reg r_target_reached;
-always @(posedge i_clk) begin
-    if (i_rst) r_target_reached <= 1'b0;
-    else       r_target_reached <= w_all_reached;  // 클럭 동기화 후 FSM 조건으로 사용
-end
+// 쓰기 시점에는 카운터가 증가하기 전 주소를 사용 → 슬롯 0부터 유실 없이 기록
+assign o_addr = (r_mode == PARAM_MODE_PLAY) ? r_play_seq : r_pose_count[2:0];
+assign o_we   = (r_mode == PARAM_MODE_RECORD) && i_btn_save && (r_pose_count < 4'd8);
 ```
 
-> **왜 레지스터로 끊나 (정확한 근거):** 동기 FSM은 클럭 엣지에서만 상태를 샘플하므로, 조합 비교의 과도기 글리치가 곧바로 헛전이(false transition)를 만들지는 **않는다.** 레지스터로 끊는 실익은 ① **24비트 비교 + FSM 다음상태 로직**으로 이어지는 긴 조합 경로를 분리해 **타이밍 마감(Fmax)에 유리**, ② 플래그를 다운스트림(클럭 인에이블 등) 어디서 써도 **안전**, 이 두 가지다. 비용은 FF 1개 + 1클럭 지연뿐(도달 1클럭 뒤 dwell 진입은 체감 불가).
-> 
-> **발표 답변 가이드:** "왜 끊었나"는 **"넓은 비교 경로의 타이밍 분리 + 플래그의 안전한 재사용"**으로 답할 것. ("글리치가 상태를 바꿔서"라는 설명은 동기 FSM에선 부정확하므로 사용하지 말 것.)
+`r_pose_count`는 `always` 블록 안에서 증가하고, `o_addr`는 **증가 전 값**을 조합으로 내보냅니다. 두 동작이 같은 클럭 엣지에서 일어나므로 저장 주소는 항상 "현재 개수" = 다음 빈 슬롯이 됩니다. 저장 개수가 8에 도달하면 `o_we`가 자동으로 막혀 오버플로가 발생하지 않습니다.
 
-### 7-7. 🛡️ 예외 처리 및 방어 로직 (Edge Cases & Safety)
+---
 
-> 데모 사고(쓰레기 동작·모터 충돌·리셋 혼선)를 막는 방어 코드. **통합 전 A·B영역이 반드시 반영.**
+## 6. Incremental Interpolation — 나눗셈 없는 부드러운 재생
 
-#### 7-7-1. 빈 메모리에서 PLAY 진입 차단 (A영역)
-
-`pose_count == 0`일 때 PLAY로 전환하면 읽기 포인터가 안 쓴 슬롯(stale 값)을 읽어 팔이 쓰레기 위치로 튀거나 시퀀서가 꼬인다. → **PLAY 전환을 `pose_count > 0`일 때만 허용**하는 가드를 둔다.
+일반적인 보간은 `(목표각 − 시작각) / 스텝수`로 증분을 계산하지만, 이 설계는 **증분을 항상 1로 고정**하고 대신 **틱 간격으로 속도를 정의**합니다.
 
 ```verilog
-// mode_fsm: PLAY 전환은 'pose_count > 0'일 때만 허용
-localparam MANUAL=2'd0, RECORD=2'd1, PLAY=2'd2;
-always @(posedge i_clk) begin
-    if (i_rst) r_mode <= MANUAL;
-    else case (i_sw_mode)
-        2'b00:   r_mode <= MANUAL;
-        2'b01:   r_mode <= RECORD;
-        2'b10:   r_mode <= (r_pose_count != 0) ? PLAY : MANUAL; // ★ 빈 메모리면 PLAY 무시
-        default: r_mode <= MANUAL;
-    endcase
-end
-```
-
-- 가드 덕분에 `play_seq`는 항상 `pose_count ≥ 1` → 쓰레기 읽기·데드락 없음. 재생은 `[0 ~ pose_count-1]`만.
-- (선택 UX) PLAY가 막혔음을 LED나 7세그(`0`)로 표시하면 사용자가 이유를 인지.
-
-#### 7-7-2. 전원 인가 시 안전 중립 자세 (B영역 + 인코딩 합의)
-
-각도 레지스터가 0°(`8'h00`)로 시작하면 전원 인가 즉시 4개 모터가 0° 끝단으로 급회전 → 돌입 전류·기구 충돌. → **각도 레지스터를 중립 90°로 시작**한다.
-
-```verilog
-// 각도 인코딩: 값=각도(0~180), 중립=90=8'd90  (※ 0~255 풀스케일 아님)
-// 'INIT값' + '리셋값' 둘 다 90° → config 직후부터, 그리고 리셋 시에도 안전 자세
-reg [7:0] r_current_base = 8'd90;   // ★ FPGA INIT 값 = config 직후 90°
-// r_current_shoulder, r_current_elbow 동일하게 = 8'd90
-
-always @(posedge i_clk) begin
-    if (i_rst) r_current_base <= 8'd90;          // ★ 리셋 시에도 90°
-    else if (w_interp_tick) begin
-        if      (r_current_base < w_base_target) r_current_base <= r_current_base + 1'b1;
-        else if (r_current_base > w_base_target) r_current_base <= r_current_base - 1'b1;
+module interp #(parameter PARAM_INIT_ANGLE = 8'd90)(...);
+    always @(posedge i_clk) begin
+        if (i_rst)                              o_cur_angle <= PARAM_INIT_ANGLE;
+        else if (i_interp_tick) begin
+            if      (o_cur_angle < i_target_angle) o_cur_angle <= o_cur_angle + 1'b1;
+            else if (o_cur_angle > i_target_angle) o_cur_angle <= o_cur_angle - 1'b1;
+        end
     end
+endmodule
+```
+
+| 특성 | 값 |
+|---|---|
+| 보간 틱 | 100 Hz (10 ms) |
+| 증분 | ±1° / 틱 |
+| 각속도 | 100 °/s |
+| 0° → 180° 전이 시간 | 1.8 s |
+| 사용 연산 | 비교, ±1 — **나눗셈·곱셈 없음** |
+
+- 목표각이 도중에 바뀌어도 현재각은 항상 새 목표를 향해 부드럽게 따라갑니다(상태 재계산 불필요).
+- 조작 틱(50 Hz)보다 보간 틱(100 Hz)이 빠르므로, MANUAL 모드에서는 현재각이 목표각을 지연 없이 추종합니다.
+- PLAY 모드에서는 목표각이 저장 자세로 즉시 점프하고, 실제 움직임의 부드러움을 이 모듈이 전담합니다.
+
+---
+
+## 7. Event-Aligned Dwell — 재생 타이밍의 핵심
+
+초기 설계는 `tick_gen`의 자유 진행 1 Hz `dwell_tick`으로 다음 자세로 넘어갔습니다. 하지만 이 방식은 **팔이 아직 목표에 도달하지 못했어도 시간만 지나면 다음 자세로 넘어가는** 문제가 있었습니다. 자세 간 이동 거리가 다르면 어떤 구간은 도중에 잘리고 어떤 구간은 필요 이상으로 기다립니다.
+
+해결은 dwell 카운터를 **시간이 아니라 도달 이벤트에 정렬**시키는 것이었습니다.
+
+```verilog
+wire w_all_reached_comb = (w_target_base     == w_cur_base) &&
+                          (w_target_shoulder == w_cur_shoulder) &&
+                          (w_target_elbow    == w_cur_elbow);
+
+always @(posedge i_clk) begin
+    r_all_reached          <= w_all_reached_comb;  // 조합 비교를 1클럭 동기화
+    r_target_reached_pulse <= 1'b0;                // 기본값 = 1클럭 펄스
+
+    if (w_play_mode && r_all_reached) begin
+        if (r_dwell_cnt >= PARAM_DWELL_CNT) begin
+            r_target_reached_pulse <= 1'b1;   // dwell 완료 → 다음 자세 1펄스
+            r_dwell_cnt            <= 27'd0;  // 펄스 후 리셋 (중복 펄스 방지)
+        end else
+            r_dwell_cnt <= r_dwell_cnt + 1'b1;
+    end else
+        r_dwell_cnt <= 27'd0;   // 도달 풀림 또는 PLAY 아님 → 즉시 0
 end
 ```
 
-- **`8'd128`이 아니라 `8'd90`인 이유:** 우리 인코딩은 0~180(도 직접)이라 중간값이 90 = `8'd90`. (8'd128은 0~255 풀스케일 기준값으로 우리 설계와 불일치.)
-- **INIT값까지 주는 이유:** 리셋값만 주면 *리셋이 걸리기 전 첫 순간(config 직후)*엔 FF가 기본 0이라 그 찰나 0°로 튈 수 있음. `reg ... = 8'd90` INIT을 줘야 config 직후부터 90°. → INIT·리셋 **둘 다** 90.
-- `angle_ctrl`의 **target 레지스터도 INIT/리셋 90**으로. 그러면 시작 시 `current == target == 90` → 추가 움직임 없음.
-- **실전:** 기구를 **90° 부근에서 조립/장착**하면 전원 인가 시 이동량·돌입 전류가 최소. 9항의 **벌크 커패시터**가 순간 전류를 흡수.
+- **3개 관절이 모두 도달**해야 카운트가 시작됩니다.
+- 도달 상태가 풀리면 카운터는 즉시 0으로 — 부분 도달로는 절대 진행하지 않습니다.
+- 완료 시 정확히 1클럭 펄스만 발생시켜 `mode_fsm`이 포인터를 **한 칸만** 이동하도록 보장합니다.
+- 조합 비교 결과를 레지스터로 한 번 받아(`r_all_reached`) 조합 경로가 FSM에 직접 물리지 않게 했습니다.
 
-#### 7-7-3. 리셋 신호 2종 완전 분리 (A영역 + XDC)
+| Parameter | Value | 의미 |
+|---|---:|---|
+| `PARAM_DWELL_CNT` | 99,999,999 | 도달 후 유지 시간 = 1 s @ 100 MHz |
 
-'글로벌 리셋'과 '저장 자세 비우기'는 트리거·역할·XDC를 **완전히 분리**한다.
+`tick_gen`의 `o_dwell_tick`은 **의도적으로 미사용**으로 남겨 두었습니다(모듈 인터페이스는 유지).
 
-|구분|신호|소스|동작 범위|
+---
+
+## 8. Servo PWM — 나눗셈 없는 듀티 계산
+
+```verilog
+module pwm_servo #(
+    parameter PARAM_PERIOD_CNT = 21'd2_000_000, // 20 ms @ 100 MHz
+    parameter PARAM_MIN_DUTY   = 21'd100_000,   // 1.0 ms = 0도
+    parameter PARAM_STEP       = 21'd556,       // (2.0ms - 1.0ms) / 180 을 미리 계산
+    parameter PARAM_MAX_ANGLE  = 8'd180
+)(...);
+    assign w_angle_clamped = (i_angle > PARAM_MAX_ANGLE) ? PARAM_MAX_ANGLE : i_angle;
+    assign w_duty_calc     = PARAM_MIN_DUTY + ({21'd0, w_angle_clamped} * PARAM_STEP);
+    assign w_duty_target   = w_duty_calc[20:0];
+
+    always @(posedge i_clk)
+        o_pwm_out <= (r_cnt_period < w_duty_target);   // 등록 출력 — 글리치 없음
+endmodule
+```
+
+| 각도 | 카운트 | 펄스 폭 |
+|---:|---:|---:|
+| 0° | 100,000 | 1.000 ms |
+| 90° | 150,040 | 1.500 ms |
+| 180° | 200,080 | 2.001 ms |
+
+- 나눗셈이 필요한 `1 ms / 180` 계산을 **파라미터로 상수화**하여, 하드웨어에는 곱셈기 하나만 남습니다.
+- 각도 클램프를 PWM 단에서 한 번 더 수행해, 상위 모듈에 버그가 있어도 서보 하드웨어 리밋을 넘지 않습니다.
+- 비교 결과를 조합 출력이 아닌 **레지스터 출력**으로 내보내 글리치를 제거했습니다.
+
+### Gripper
+
+집게는 각도 제어가 아니라 2상태(열림/닫힘)이므로 1비트로 저장하고, 출력 직전에 각도로 변환합니다.
+
+```verilog
+wire       w_gripper_target_bit = w_play_mode ? w_pose_from_bank[24] : i_sw_gripper;
+wire [7:0] w_gripper_angle      = w_gripper_target_bit ? PARAM_GRIPPER_CLOSE : PARAM_GRIPPER_OPEN;
+```
+
+| Parameter | Value | 비고 |
+|---|---:|---|
+| `PARAM_GRIPPER_OPEN` | 10 | 0에서 조금씩 올려가며, 버즈(떨림)가 멈추는 값이 실제 '열림' |
+| `PARAM_GRIPPER_CLOSE` | 160 | 실제로 물리는 각 — 180°가 아닐 가능성이 커서 실측으로 결정 |
+
+---
+
+## 9. Input Conditioning
+
+### Debounce
+
+```verilog
+// 1단계: 비동기 입력의 메타스테이블 방지 2단 동기화
+r_sync0 <= i_btn_raw;
+r_sync1 <= r_sync0;
+
+// 2단계: 안정 상태와 다른 값이 10 ms(1,000,000 clk) 유지될 때만 레벨 갱신
+if (r_sync1 != r_level) begin
+    if (w_max_tick) begin r_level <= r_sync1; r_cnt <= 20'd0; end
+    else                  r_cnt   <= r_cnt + 1'b1;
+end else                  r_cnt   <= 20'd0;
+
+// 3단계: 레벨의 0→1 순간에만 1클럭 펄스
+assign o_btn_edge = r_level & ~r_level_d;
+```
+
+**level과 edge 두 출력을 분리**한 것이 설계 포인트입니다.
+
+| 출력 | 사용처 | 이유 |
+|---|---|---|
+| `o_btn_level` | BTNU / BTND (각도 증감) | 누르고 있는 동안 계속 증감해야 하므로 상태 유지형이 필요 |
+| `o_btn_edge` | BTNC (저장) / BTNL·BTNR (관절 선택) | 한 번 누르면 한 번만 동작해야 하므로 1클럭 펄스 필요 |
+
+### Joint Select
+
+```verilog
+// 순환 선택 — 조합 나머지 연산 없이 경계값만 특수 처리
+if (i_btn_left_edge)       o_sel_joint <= (o_sel_joint == 2'd0) ? 2'd2 : o_sel_joint - 1'b1;
+else if (i_btn_right_edge) o_sel_joint <= (o_sel_joint == 2'd2) ? 2'd0 : o_sel_joint + 1'b1;
+```
+
+2-bit 카운터의 `2'd3` 상태를 사용하지 않고 0↔2 사이만 순환시켜, 정의되지 않은 관절 인덱스가 나오지 않도록 했습니다.
+
+---
+
+## 10. Display
+
+### 7-Segment Multiplexing
+
+```verilog
+reg [17:0] r_refresh_cnt;
+wire [1:0] w_digit_sel = r_refresh_cnt[17:16];   // 약 1.5 kHz로 4자리 순환
+```
+
+| Digit | `w_digit_sel` | 표시 내용 |
+|---|---|---|
+| 1 (최우측) | `2'b00` | 저장된 자세 개수 (0~8, 범위 밖은 `-`) |
+| 2 | `2'b01` | 미사용 (소등) |
+| 3 | `2'b10` | 미사용 (`-` 고정) |
+| 4 (최좌측) | `2'b11` | 현재 모드 — `M` / `R` / `P` |
+
+100 MHz를 18-bit 카운터의 상위 2비트로 분주하여 자리당 약 1.5 kHz로 전환하므로, 사람 눈에는 4자리가 동시에 켜진 것처럼 보입니다.
+
+### LED
+
+| LED | 표시 |
+|---|---|
+| `o_led[15:14]` | 현재 모드 (2-bit) |
+| `o_led[2:0]` | 선택된 관절 원-핫 (`001` Base / `010` Shoulder / `100` Elbow) |
+
+---
+
+## 11. Hardware and Pin Mapping (Basys 3)
+
+| Signal | Pin | 보드 위치 | 용도 |
 |---|---|---|---|
-|**하드 리셋**|`i_rst`|**SW15** (level, active-high)|시스템 전체 (모드·각도·포인터·`pose_count`)|
-|**소프트 clear**|`w_clear_pulse`|**SW14** (상승엣지 1펄스)|**`pose_count`·쓰기포인터만** 0 (팔 위치·모드 불변)|
+| `i_clk` | `W5` | 100 MHz 오실레이터 | 시스템 클럭 (`create_clock -period 10.00`) |
+| `i_rst` | `R2` | SW15 | Active-High 동기 리셋 |
+| `i_sw_mode[0]` | `V17` | SW0 | 모드 비트 0 |
+| `i_sw_mode[1]` | `V16` | SW1 | 모드 비트 1 |
+| `i_sw_gripper` | `W16` | SW2 | 집게 열림/닫힘 |
+| `i_btn_c` | `U18` | BTNC | 자세 저장 (Edge) |
+| `i_btn_u` | `T18` | BTNU | 각도 증가 (Level) |
+| `i_btn_d` | `U17` | BTND | 각도 감소 (Level) |
+| `i_btn_l` | `W19` | BTNL | 관절 선택 ◀ (Edge) |
+| `i_btn_r` | `T17` | BTNR | 관절 선택 ▶ (Edge) |
+| `o_pwm_base` | `J1` | Pmod JA1 | Base 서보 |
+| `o_pwm_shoulder` | `L2` | Pmod JA2 | Shoulder 서보 |
+| `o_pwm_elbow` | `J2` | Pmod JA3 | Elbow 서보 |
+| `o_pwm_gripper` | `G2` | Pmod JA4 | Gripper 서보 |
+| `o_seg[6:0]` | `W7,W6,U8,V8,U5,V5,U7` | 7-Segment | 세그먼트 a~g (Active-Low) |
+| `o_an[3:0]` | `U2,U4,V4,W4` | 7-Segment | 자릿수 선택 (Active-Low) |
+| `o_led[15:0]` | `U16 … L1` | LED ×16 | 모드 및 선택 관절 표시 |
 
-```verilog
-// 소프트 clear (mode_fsm 내부) — SW14 상승엣지를 debounce/edge로 1펄스화하여 사용
-wire w_clear_pulse;   // = SW14의 0→1 순간 1클럭
-always @(posedge i_clk) begin
-    if (i_rst) begin                       // 하드 리셋: 전체 초기화의 일부
-        r_pose_count <= 0;
-        r_wr_ptr     <= 0;
-    end else if (w_clear_pulse) begin      // ★ 소프트: 저장만 비움 (모드·팔 위치 그대로)
-        r_pose_count <= 0;
-        r_wr_ptr     <= 0;
-    end else if (w_save_pulse) begin        // RECORD에서 BTNC 저장
-        r_pose_count <= r_pose_count + 1'b1; // (최대치 클램프)
-        r_wr_ptr     <= r_wr_ptr + 1'b1;
-    end
-end
+```tcl
+set_property BITSTREAM.GENERAL.COMPRESS TRUE  [current_design]
+set_property BITSTREAM.CONFIG.CONFIGRATE 33   [current_design]
+set_property CONFIG_MODE SPIx4                [current_design]
 ```
 
-- **'BTND를 글로벌 리셋으로'는 불가:** BTND는 우리 제어 맵에서 **'각도 감소'**. 십자 5버튼이 모두 조작용이라 리셋은 **스위치(SW15)**로 둔다.
-- **XDC 분리:** `SW15 → i_rst`, `SW14 → clear`. 두 트리거가 절대 겹치지 않음.
-- **(대안)** 더 단순하게 가려면 SW14를 없애고 **'RECORD 모드 진입 시 `pose_count=0`'**으로 두면 새 녹화가 항상 깨끗하게 시작됨 → 스위치 1개 절약. (단, 녹화 중 MANUAL로 나갔다 오면 초기화되는 점만 인지.)
+---
+
+## 12. Timing Parameters
+
+| Parameter | Module | Value | 실제 시간 |
+|---|---|---:|---|
+| `PARAM_JOG_MAX` | `tick_gen` | 1,999,999 | 20 ms (50 Hz) — 수동 조작 각도 증감 주기 |
+| `PARAM_INTERP_MAX` | `tick_gen` | 999,999 | 10 ms (100 Hz) — 보간 갱신 주기 |
+| `PARAM_DWELL_MAX` | `tick_gen` | 99,999,999 | 1 s (1 Hz) — 미사용 (이벤트 정렬 카운터로 대체) |
+| `PARAM_DWELL_CNT` | `top` | 99,999,999 | 1 s — 도달 후 머무름 시간 |
+| `PARAM_DEBOUNCE_MAX_COUNT` | `debounce` | 1,000,000 | 10 ms — 채터링 판정 시간 |
+| `PARAM_PERIOD_CNT` | `pwm_servo` | 2,000,000 | 20 ms — 서보 PWM 주기 |
+| `PARAM_MIN_DUTY` | `pwm_servo` | 100,000 | 1.0 ms — 0° 펄스 폭 |
+| `PARAM_STEP` | `pwm_servo` | 556 | 5.56 µs/° |
+| `PARAM_INIT_ANGLE` | `interp` | 90 | 부팅·리셋 시 중립 자세 |
+
+- 수동 조작: 50 Hz × 1° → **0°에서 180°까지 3.6초**
+- 자동 재생: 100 Hz × 1° → **0°에서 180°까지 1.8초**
 
 ---
 
-## 8. 일정 (5일) — 현실적인 마일스톤
+## 13. Troubleshooting
 
-### Day 1 — 개별 모듈 검증
-
-- [B] `pwm_servo` 완성 + 모터 1개 구동 테스트 / [B] `tick_gen` 작성
-- [C] `debounce` 테스트벤치 검증 + LED 동작 확인
-- ✅ **모터 1개가 움직이고, 버튼 입력이 깨끗하게 들어옴**
-
-### Day 2 — 십자 버튼 수동 조작 완성 _(1차 목표)_
-
-- `joint_select` + `angle_ctrl` 통합. 십자 ◀▶로 관절 선택, ▲▼로 각도 증감 (이 단계는 current=target 직결, 보간 전). **각도 INIT/리셋 90° 적용**
-- 모터 4개(3관절+집게) 수동 제어
-- ✅ **끝나면: 십자 버튼으로 조작되는 로봇 팔 완성 = 이미 완성작**
-
-### Day 3 — 녹화/재생 기능 연동 _(핵심)_
-
-- [A] `mode_fsm`+`reg_bank` 연동. RECORD 시 자세 저장, PLAY 시 저장 자세 **점프 재생**. **빈 메모리 PLAY 가드·리셋 2종 분리 반영(7-7)**
-- ✅ **끝나면: 기본 Teach & Playback 동작 (점프 방식)**
-
-### Day 4 — 부드러운 재생 + UI _(완성도)_
-
-- [B] `interp` 추가 → PLAY가 점프 대신 **부드럽게**. `play_seq`로 도달 플래그(7-6) → dwell → 다음
-- `seg_display` 연동, 상태 전환 버그 수정
-- ✅ **끝나면: 부드러운 재생 완성**
-- _보간(Day 4)이 막혀도 Day 3의 점프 재생이 완성품으로 남음. `interp`는 current/target 사이에만 끼우는 거라 분리되어 안전._
-
-### Day 5 — 마감 및 발표 준비
-
-- 로봇 팔·보드 선정리, **시연 영상 촬영(동작 실패 대비 백업 영상 필수)**
-- 발표 자료 작성 (순차회로·증분 보간을 어떻게 적용했는지 강조)
-
-> Day 4~5에 여유를 둬서 앞 일정이 밀려도 흡수.
+| Problem | Cause | Applied Solution |
+|---|---|---|
+| 팔이 도달하기 전에 다음 자세로 넘어감 | 자유 진행 `dwell_tick`으로 시간만 보고 진행 | 도달이 연속 유지될 때만 카운트하는 **이벤트 정렬 dwell**로 교체 |
+| 다음 자세로 두 칸씩 건너뜀 | dwell 완료 신호가 여러 클럭 유지 | 완료 시 정확히 1클럭 펄스만 발생시키고 카운터 즉시 리셋 |
+| 저장 슬롯 0이 비고 1번부터 기록됨 | 카운터 증가 후 주소를 사용 | `o_addr`를 **증가 전** `r_pose_count`로 조합 출력 |
+| 자세 개수가 8을 넘어 덮어씀 | 쓰기 조건에 상한 없음 | `o_we`에 `(r_pose_count < 4'd8)` 조건 결합 |
+| 저장된 자세가 없는데 PLAY 진입 | 모드 전환에 가드 없음 | `r_pose_count == 0`이면 MANUAL로 강제 유지 |
+| RECORD 재진입 시 이전 기록과 섞임 | 진입 시 카운터가 유지됨 | 모드 진입 Edge(`w_enter_record`)에서 카운터 클리어 |
+| 버튼 1회 입력이 여러 번 인식 | 기계식 접점 채터링 | 10 ms 카운터 디바운스 |
+| 비동기 버튼 입력으로 메타스테이블 | 클럭 도메인 미동기화 | 2단 동기화 FF 삽입 |
+| 각도 증감이 안 되거나 한 번만 됨 | 저장 버튼과 같은 edge 신호 사용 | `o_btn_level`(유지형)과 `o_btn_edge`(펄스형) 출력 분리 |
+| 보드 부팅 순간 팔이 0°로 튐 | 레지스터 초기값 미지정 | 선언과 동시에 `8'd90`(중립) 초기화 + 리셋 시에도 90° 복귀 |
+| 목표각이 서보 리밋을 넘음 | 증감에 범위 검사 없음 | `angle_ctrl`에서 0~180 클램프 + `pwm_servo`에서 재차 클램프 |
+| PWM 출력에 글리치 | 비교 결과를 조합으로 직접 출력 | 등록(registered) 출력으로 변경 |
+| 나눗셈 IP가 필요해 보임 | 듀티 = `(max−min)/180 × angle` | `(2ms−1ms)/180`을 파라미터 상수(556)로 미리 계산 → 곱셈만 남김 |
+| 재생 부드러움에 나눗셈 필요 | 구간별 증분 계산 방식 | 증분을 1로 고정하고 **틱 주기로 속도 정의**하는 증분 보간 |
+| 집게가 물리지 않거나 계속 떨림 | 0°/180° 이론값이 실제 리밋과 불일치 | 실측으로 `OPEN = 10`, `CLOSE = 160` 결정 |
+| 조합 비교 경로가 FSM에 직접 물림 | 3관절 비교 결과를 바로 사용 | `r_all_reached` 레지스터로 1클럭 동기화 후 사용 |
+| 7세그가 어둡거나 깜빡임 | 리프레시 주파수 부적절 | 18-bit 카운터 상위 2비트로 자리당 약 1.5 kHz 전환 |
 
 ---
 
-## 9. 전원 — 최종 구성
+## 14. Repository Structure
 
-**18650 2직렬(7.4V) → HW-688(스위칭 벅, 5V 출력) → 서보 2개**, 이 체인을 **2벌**로 (서보 4개를 2+2 분산).
-
-- 모듈은 인덕터가 있는 **스위칭 벅**이라 7.4V→5V를 효율적으로 변환(발열 적음). 이 데모에 적합.
-- 5V는 MG996R 동작범위(4.8~6V) 안 → 그대로 사용 OK.
-
-**확인 사항 3가지:**
-
-1. ⚠️ **각 모듈 출력 전류 정격** — 3A 권장. (MG996R 2개 일반 구동 1~2A, 동시 스톨은 드뭄. 벌크캡으로 피크 흡수하면 2~3A급도 가능. 칩 모델명으로 확인)
-2. 🔌 **(가장 중요) 공통 그라운드** — **두 모듈의 출력 GND끼리, 그리고 Basys3 GND를 모두 하나로 연결.** 배터리팩이 둘이라 전원 도메인이 분리되어 있어, GND를 안 묶으면 PWM 신호 기준이 어긋나 서보가 오작동함. **분리 전원의 핵심 함정.**
-3. **벌크 커패시터** — 각 서보 전원라인에 470~1000µF 하나씩 (순간 전류 스파이크 흡수 → 떨림·리셋 감소)
-
-**🟢 전원 인가 시 안전 자세 (7-7-2 연계):** 각도 레지스터 INIT/리셋값을 중립 90°(`8'd90`)로 두고 기구를 90° 부근에서 조립하면, 시작 시 모터 이동·돌입 전류가 최소화됨. 위 벌크 커패시터가 순간 전류를 흡수.
-
-**배선 정리:**
-
-- 모듈 (+) 5V → 서보 2개 빨강선 / 모듈 (−) → 서보 2개 갈색선
-- 모든 GND(모듈1, 모듈2, Basys3) 공통 연결
-- Basys3 PWM 출력핀 → 각 서보 신호선(주황/노랑)
-- **Basys3 본체는 자체 USB로 전원** (FPGA는 저전력이라 충분)
-
----
-
-## 10. ⚠️ 모두가 알아야 할 주의사항
-
-### 🔌 전원 (데모 망치는 1순위 원인)
-
-- 서보 전원은 **반드시 외부(HW-688)에서**, **절대 Basys3 VCC에서 뽑지 말 것** (FPGA 리셋·소자 소손).
-- **공통 그라운드 연결을 잊지 말 것** (위 9번 2항 — 분리 전원일수록 치명적).
-
-### 🛡️ 방어 로직 (위 7-7) — 통합 전 필수 반영
-
-- **빈 메모리 PLAY 차단**: `pose_count==0`이면 PLAY 무시, MANUAL 유지.
-- **전원 인가 시 중립 자세**: 각도 INIT/리셋값 = 90°(`8'd90`), 기구도 90° 부근 조립.
-- **리셋 2종 분리**: 하드 `i_rst`(SW15) ↔ 소프트 clear(SW14), XDC 완전 분리.
-
-### 🕐 동기 설계 (위 7-3·7-6)
-
-- 리셋은 **동기식으로 통일**(`always @(posedge i_clk)` 내 `if (i_rst)`).
-- FSM 조건에 넣는 **넓은 비교(`==`) 결과는 레지스터 플래그로 한 단계 끊어** 사용.
-- 메모리(데이터)는 리셋하지 않고 **제어(자세 개수·포인터)만 리셋**(7-4).
-
-### 🧪 시뮬레이션(테스트벤치) 우선
-
-- 보드에 비트스트림 굽는 건 **가장 마지막**. 코드를 짜면 반드시 Vivado 시뮬로 **파형을 먼저 예측·확인**할 것. "합성이 오래 걸린다"고 시뮬을 건너뛰면 디버깅 시간이 10배 늘어남.
-- 파형을 예측할 수 있으면 = 그 모듈을 이해한 것. 이게 발표 질의응답 대비의 핵심.
-
-### 🔀 Git 협업 (위 7번 표준 준수)
-
-- 1파일 1모듈 → 각자 자기 파일만 commit. 같은 파일 동시 수정 금지 → 병합 충돌 예방.
-- 포트명·비트폭은 7번 표준을 그대로 따를 것 → 인스턴스화 에러 예방.
+```text
+MimicArm-FPGA-Project/
+├── top.v                 # 최상위 배선 + 도달 검출 + 이벤트 정렬 dwell 카운터
+│
+├── mode_fsm.v            # MANUAL/RECORD/PLAY 상태, pose_count, play_seq, we/addr
+├── reg_bank.v            # D-FF 25-bit × 8 자세 레지스터 뱅크 (BRAM 미사용)
+├── angle_ctrl.v          # 관절별 목표각 레지스터 (MANUAL 증감 / PLAY 오버라이드)
+├── interp.v              # 나눗셈 없는 증분 보간 (관절당 1 인스턴스)
+├── pwm_servo.v           # 각도 → 20 ms PWM 듀티 (곱셈만 사용, 클램프 포함)
+│
+├── joint_select.v        # BTNL/BTNR 관절 순환 선택
+├── debounce.v            # 2단 동기화 + 10 ms 디바운스, level/edge 분리
+├── tick_gen.v            # jog 50 Hz / interp 100 Hz / dwell 1 Hz 틱 생성
+├── seg_display.v         # 4자리 7세그먼트 시분할 표시
+│
+├── Basys-3-Master.xdc    # 핀 제약 및 비트스트림 설정
+└── README.md
+```
 
 ---
 
-_이 문서는 진행하면서 계속 업데이트. 바뀐 게 있으면 공유._
+## 15. Key Source Files
+
+| File | Description |
+|---|---|
+| [`top.v`](./top.v) | 모듈 통합 배선, 3관절 도달 비교, 이벤트 정렬 dwell 카운터, 집게 각도 변환 |
+| [`mode_fsm.v`](./mode_fsm.v) | 모드 상태 머신, 저장 개수·재생 포인터, 쓰기 주소 타이밍 정렬, PLAY 가드 |
+| [`reg_bank.v`](./reg_bank.v) | BRAM 없는 D-FF 레지스터 뱅크, 25-bit 자세 워드 |
+| [`interp.v`](./interp.v) | 나눗셈 없는 증분 보간의 핵심 (6줄) |
+| [`pwm_servo.v`](./pwm_servo.v) | 상수화된 STEP으로 나눗셈 제거, 각도 클램프, 등록 출력 |
+| [`debounce.v`](./debounce.v) | 메타스테이블 방지 + 채터링 제거 + level/edge 분리 |
+| [`angle_ctrl.v`](./angle_ctrl.v) | 목표각 범위 제한 및 모드별 갱신 경로 |
+| [`tick_gen.v`](./tick_gen.v) | 세 종류 시간 축 생성 |
+| [`seg_display.v`](./seg_display.v) | 시분할 표시 및 세그먼트 디코딩 |
+| [`Basys-3-Master.xdc`](./Basys-3-Master.xdc) | 전체 핀 매핑 및 클럭 제약 |
+
+---
+
+## 16. Result and Learning
+
+### Result
+
+- **XADC · BRAM IP · 나눗셈 연산자를 전혀 쓰지 않고** Teach & Playback 전 기능 구현
+- D-FF 레지스터 뱅크(25-bit × 8)로 자세 저장 — 파형 시뮬레이션으로 전 과정 추적 가능
+- 증분 보간과 상수화된 PWM STEP으로 부드러운 재생을 나눗셈 없이 달성
+- 시간 기반 dwell을 **도달 이벤트 기반**으로 바꿔 자세 간 이동 거리에 무관하게 정확한 재생
+- level/edge 출력 분리로 "누르고 있으면 계속" 과 "한 번 누르면 한 번" 을 하나의 디바운서로 처리
+- PLAY 가드·저장 상한·이중 각도 클램프 등 방어 조건을 상태 머신과 출력단에 분산 배치
+
+### What I Learned
+
+- 조합 논리와 순차 논리의 경계 설계 — 조합 비교 결과를 레지스터로 받아 타이밍 경로를 끊는 이유
+- 비동기 외부 입력을 클럭 도메인으로 안전히 가져오는 2단 동기화의 필요성
+- 카운터 기반 디바운스에서 "임계 시간"과 "상태 갱신 시점"을 분리하는 방법
+- 나눗셈처럼 비용이 큰 연산을 **파라미터 상수화**와 **증분 알고리즘**으로 회피하는 설계 전략
+- 쓰기 주소와 카운터 증가가 같은 클럭 엣지에서 일어날 때의 타이밍 정렬
+- 자유 진행 카운터와 이벤트 정렬 카운터의 차이, 그리고 후자가 필요한 상황
+- 1클럭 펄스 계약(handshake)으로 모듈 간 상태 전이를 정확히 1회만 발생시키는 방법
+- 서보의 이론 스펙과 실측값 차이를 파라미터로 흡수하는 실용적 접근
+
+---
+
+## 17. Future Improvements
+
+- 저장된 자세를 **비휘발성으로 보존** (현재는 전원 차단 시 소실)
+- 자세별 dwell 시간을 개별 지정 (현재는 전 구간 1초 고정)
+- 재생 속도 조절 스위치 추가 (`interp_tick` 분주비 가변화)
+- RECORD 중 개별 슬롯 수정·삭제 기능 (현재는 진입 시 전체 클리어만 가능)
+- `seg_display`의 `o_led` 포트가 `top`에서 미연결 상태 — LED 구동 경로를 한쪽으로 정리
+- 사용하지 않는 `tick_gen.o_dwell_tick` 정리 또는 용도 확정
+- 각 모듈 테스트벤치 작성 및 시뮬레이션 파형 문서화
+- 자세 슬롯 수를 파라미터화해 8개 이상으로 확장 (D-FF 자원 한계 검토 포함)
+
+---
+
+<div align="center">
+
+**Digital Logic Design · Verilog · FSM · Servo PWM · Teach & Playback**
+
+GitHub: [@kimdk1005-collab](https://github.com/kimdk1005-collab)
+
+</div>
