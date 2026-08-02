@@ -447,24 +447,34 @@ set_property CONFIG_MODE SPIx4                [current_design]
 
 ## 14. Repository Structure
 
+폴더 구조는 [4. Module Hierarchy](#4-module-hierarchy--dataflow)에서 설명한 **최상위 → 핵심 → 주변** 계층을 그대로 반영합니다.
+
 ```text
 MimicArm-FPGA-Project/
-├── top.v                 # 최상위 배선 + 도달 검출 + 이벤트 정렬 dwell 카운터
+├── rtl/
+│   ├── top.v                 # 최상위 배선 + 도달 검출 + 이벤트 정렬 dwell 카운터
+│   │
+│   ├── core/                 # 제어 · 데이터패스 핵심
+│   │   ├── mode_fsm.v        # MANUAL/RECORD/PLAY 상태, pose_count, play_seq, we/addr
+│   │   ├── reg_bank.v        # D-FF 25-bit × 8 자세 레지스터 뱅크 (BRAM 미사용)
+│   │   ├── angle_ctrl.v      # 관절별 목표각 레지스터 (MANUAL 증감 / PLAY 오버라이드)
+│   │   ├── interp.v          # 나눗셈 없는 증분 보간 (관절당 1 인스턴스)
+│   │   └── pwm_servo.v       # 각도 → 20 ms PWM 듀티 (곱셈만 사용, 클램프 포함)
+│   │
+│   └── periph/               # 입력 컨디셔닝 · 시간축 · 표시
+│       ├── joint_select.v    # BTNL/BTNR 관절 순환 선택
+│       ├── debounce.v        # 2단 동기화 + 10 ms 디바운스, level/edge 분리
+│       ├── tick_gen.v        # jog 50 Hz / interp 100 Hz / dwell 1 Hz 틱 생성
+│       └── seg_display.v     # 4자리 7세그먼트 시분할 표시
 │
-├── mode_fsm.v            # MANUAL/RECORD/PLAY 상태, pose_count, play_seq, we/addr
-├── reg_bank.v            # D-FF 25-bit × 8 자세 레지스터 뱅크 (BRAM 미사용)
-├── angle_ctrl.v          # 관절별 목표각 레지스터 (MANUAL 증감 / PLAY 오버라이드)
-├── interp.v              # 나눗셈 없는 증분 보간 (관절당 1 인스턴스)
-├── pwm_servo.v           # 각도 → 20 ms PWM 듀티 (곱셈만 사용, 클램프 포함)
+├── constraints/
+│   └── Basys-3-Master.xdc    # 핀 제약 및 비트스트림 설정
 │
-├── joint_select.v        # BTNL/BTNR 관절 순환 선택
-├── debounce.v            # 2단 동기화 + 10 ms 디바운스, level/edge 분리
-├── tick_gen.v            # jog 50 Hz / interp 100 Hz / dwell 1 Hz 틱 생성
-├── seg_display.v         # 4자리 7세그먼트 시분할 표시
-│
-├── Basys-3-Master.xdc    # 핀 제약 및 비트스트림 설정
+├── assets/                   # 실물 사진 및 보드 패널 이미지
 └── README.md
 ```
+
+> Vivado 프로젝트 파일(`.xpr`)은 포함하지 않았습니다. 재현 시 새 RTL 프로젝트를 만들고 `rtl/`을 **Add Sources → Add Directories**로 재귀 추가한 뒤, `constraints/Basys-3-Master.xdc`를 제약 파일로 추가하면 됩니다. 최상위 모듈은 `top`입니다.
 
 ---
 
@@ -472,16 +482,16 @@ MimicArm-FPGA-Project/
 
 | File | Description |
 |---|---|
-| [`top.v`](./top.v) | 모듈 통합 배선, 3관절 도달 비교, 이벤트 정렬 dwell 카운터, 집게 각도 변환 |
-| [`mode_fsm.v`](./mode_fsm.v) | 모드 상태 머신, 저장 개수·재생 포인터, 쓰기 주소 타이밍 정렬, PLAY 가드 |
-| [`reg_bank.v`](./reg_bank.v) | BRAM 없는 D-FF 레지스터 뱅크, 25-bit 자세 워드 |
-| [`interp.v`](./interp.v) | 나눗셈 없는 증분 보간의 핵심 (6줄) |
-| [`pwm_servo.v`](./pwm_servo.v) | 상수화된 STEP으로 나눗셈 제거, 각도 클램프, 등록 출력 |
-| [`debounce.v`](./debounce.v) | 메타스테이블 방지 + 채터링 제거 + level/edge 분리 |
-| [`angle_ctrl.v`](./angle_ctrl.v) | 목표각 범위 제한 및 모드별 갱신 경로 |
-| [`tick_gen.v`](./tick_gen.v) | 세 종류 시간 축 생성 |
-| [`seg_display.v`](./seg_display.v) | 시분할 표시 및 세그먼트 디코딩 |
-| [`Basys-3-Master.xdc`](./Basys-3-Master.xdc) | 전체 핀 매핑 및 클럭 제약 |
+| [`rtl/top.v`](./rtl/top.v) | 모듈 통합 배선, 3관절 도달 비교, 이벤트 정렬 dwell 카운터, 집게 각도 변환 |
+| [`rtl/core/mode_fsm.v`](./rtl/core/mode_fsm.v) | 모드 상태 머신, 저장 개수·재생 포인터, 쓰기 주소 타이밍 정렬, PLAY 가드 |
+| [`rtl/core/reg_bank.v`](./rtl/core/reg_bank.v) | BRAM 없는 D-FF 레지스터 뱅크, 25-bit 자세 워드 |
+| [`rtl/core/interp.v`](./rtl/core/interp.v) | 나눗셈 없는 증분 보간의 핵심 (6줄) |
+| [`rtl/core/pwm_servo.v`](./rtl/core/pwm_servo.v) | 상수화된 STEP으로 나눗셈 제거, 각도 클램프, 등록 출력 |
+| [`rtl/core/angle_ctrl.v`](./rtl/core/angle_ctrl.v) | 목표각 범위 제한 및 모드별 갱신 경로 |
+| [`rtl/periph/debounce.v`](./rtl/periph/debounce.v) | 메타스테이블 방지 + 채터링 제거 + level/edge 분리 |
+| [`rtl/periph/tick_gen.v`](./rtl/periph/tick_gen.v) | 세 종류 시간 축 생성 |
+| [`rtl/periph/seg_display.v`](./rtl/periph/seg_display.v) | 시분할 표시 및 세그먼트 디코딩 |
+| [`constraints/Basys-3-Master.xdc`](./constraints/Basys-3-Master.xdc) | 전체 핀 매핑 및 클럭 제약 |
 
 ---
 
